@@ -10,13 +10,13 @@ char* wait_msg;
 
 static int __init mk_life_init(void)
 {
-	wait_msg = (char*)kmalloc(7 * sizeof(char), GFP_KERNEL);
-	//if (!wait_msg)
-	//	return ENOMEM;
+	wait_msg = NULL;//(char*)kmalloc(7 * sizeof(char), GFP_KERNEL);
+	if (!wait_msg)
+		return -ENOMEM;
 	memcpy(wait_msg, "Wait...", 7);
         printk("Making your life simplier\n");
 	printk("%s\n", wait_msg);
-	return ENOMEM;
+	return 0;
 }
 
 
