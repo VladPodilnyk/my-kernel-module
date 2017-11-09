@@ -3,7 +3,7 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
-#include <linux/string.h>
+#include <linux/delay.h>
 #include <linux/time.h>
 #include <linux/irqreturn.h>
 #include <linux/interrupt.h>
@@ -13,10 +13,18 @@
 
 static struct uart_port *uap;
 
-static irqreturn_t simple_irq_handler(int irq, void *dev_id)
+static irqreturn_t simple_irq_handler_top(int irq, void *dev_id)
 {
-	printk("IRQ: %i\n", irq);
+	printk("Top: %i\n", current->pid);
+	return IRQ_WAKE_THREAD;
+}
+
+static irqreturn_t simple_irq_handler_bottom(int irq, void *dev_id)
+{
+	msleep(200);
+	printk("Bottom: %i\n", current->pid);
 	return IRQ_HANDLED;
+
 }
 
 
@@ -27,7 +35,7 @@ static int __init mk_life_init(void)
 	uap = kmalloc(sizeof(struct uart_port), GFP_KERNEL);
 	if (!uap)
 		return -ENOMEM;
-	irq_ret = request_irq(SIMPLE_DEV_IRQ, simple_irq_handler, IRQF_SHARED, "simple-dev", uap);
+	irq_ret = request_threaded_irq(SIMPLE_DEV_IRQ, simple_irq_handler_top, simple_irq_handler_bottom, IRQF_SHARED, "simple-dev", uap);
 	if (irq_ret < 0)
 		return -ENXIO;
 	printk("Making your life simplier...\n");
