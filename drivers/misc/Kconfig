@@ -794,6 +794,13 @@ config PANEL_BOOT_MESSAGE
 	  An empty message will only clear the display at driver init time. Any other
 	  printf()-formatted message is valid with newline and escape codes.
 
+config SIMPLE_DEV
+	depends on INPUT
+	tristate "Simple device module"
+	default "n"
+	---help---
+	   This is simple device driver. It makes life simplier.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
