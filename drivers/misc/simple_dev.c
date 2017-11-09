@@ -5,35 +5,41 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/time.h>
+#include <linux/irqreturn.h>
+#include <linux/interrupt.h>
+#include <linux/serial_core.h>
 
-char* wait_msg;
-struct
+#define SIMPLE_DEV_IRQ 53
+
+static struct uart_port *uap;
+
+static irqreturn_t simple_irq_handler(int irq, void *dev_id)
 {
-  struct timeval start;
-  struct timeval finish;
-} timer;
+	printk("IRQ: %i\n", irq);
+	return IRQ_HANDLED;
+}
 
 
 static int __init mk_life_init(void)
 {
-	do_gettimeofday(& timer.start);
-	wait_msg = (char*)kmalloc(7 * sizeof(char), GFP_KERNEL);
-	if (!wait_msg)
+	int irq_ret;
+
+	uap = kmalloc(sizeof(struct uart_port), GFP_KERNEL);
+	if (!uap)
 		return -ENOMEM;
-	memcpy(wait_msg, "Wait...", 7);
-        printk("Making your life simplier\n");
-	printk("%s\n", wait_msg);
+	irq_ret = request_irq(SIMPLE_DEV_IRQ, simple_irq_handler, IRQF_SHARED, "simple-dev", uap);
+	if (irq_ret < 0)
+		return -ENXIO;
+	printk("Making your life simplier...\n");
 	return 0;
 }
 
 
 static void __exit mk_life_exit(void)
 {	
-	kfree(wait_msg);;
-	do_gettimeofday(& timer.finish);
-	printk("Work time: %ld sec.\n" timer.finish.tv_sec - timer.start.tv_sec);
-        printk("Congrats!!! Your life is simple\n");
-	
+	free_irq(SIMPLE_DEV_IRQ, uap);
+	kfree(uap);
+	printk("Congrats!!! Your life is simple.\n");
 }
 
 
