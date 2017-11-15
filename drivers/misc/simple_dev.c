@@ -24,7 +24,7 @@
 #define STOP_COMM	"stop"
 #define CLEAR_COMM	"clear"
 #define COMM_LEN		6
-#define MEM_CHUNK		4000
+#define ALIGN_BORDER 	4
 
 
 //
@@ -36,24 +36,41 @@ typedef struct {
 	unsigned int block_size:32;
 } header_t;
 
-void *gp_to_buffer;
-size_t g_buffer_size;
+
+struct mem_meta_data
+{
+	void *gp_to_buffer;
+	size_t g_buffer_size;
+	int order;
+} buf_data;
+
 
 int init_buffer(int order)
 {
 	header_t *buffer;
-	gp_to_buffer = (void*) __get_free_pages(GFP_KERNEL, order);
-	g_buffer_size = (order + 1) * MEM_CHUNK;
-	if (!gp_to_buffer) {
-		g_buffer_size = 0;
-		return -1;
+	buf_data.order = order;
+	buf_data.gp_to_buffer = (void*) __get_free_pages(GFP_KERNEL, order);
+	buf_data.g_buffer_size = (order + 1) * PAGE_SIZE;
+	if (!buf_data.gp_to_buffer) {
+		buf_data.g_buffer_size = 0;
+		return -ENOMEM;
 	}
-	gp_to_buffer = (void*)((size_t)gp_to_buffer + (4 - ((size_t)gp_to_buffer % 4)));
-	buffer = (header_t*)gp_to_buffer;
+	buf_data.gp_to_buffer = (void*)((size_t)buf_data.gp_to_buffer
+							+ (ALIGN_BORDER - ((size_t)buf_data.gp_to_buffer % ALIGN_BORDER)));
+	buffer = (header_t*)buf_data.gp_to_buffer;
 	buffer->prev_block_size = 0;
 	buffer->is_free = TRUE;
-	buffer->block_size = g_buffer_size;
+	buffer->block_size = buf_data.g_buffer_size;
 	return 0;
+}
+
+
+void release_mem(void)
+{
+	free_pages((unsigned long)buf_data.gp_to_buffer, buf_data.order);
+	buf_data.gp_to_buffer = NULL;
+	buf_data.g_buffer_size = 0;
+	buf_data.order = -1;
 }
 
 
@@ -66,17 +83,17 @@ void mem_free(void *mem_block)
 	next_block = (header_t*)((size_t)current_block + current_block->block_size);
 
 	current_block->is_free = TRUE;
-	if ((current_block != prev_block) && ((size_t)prev_block >= (size_t)gp_to_buffer)
+	if ((current_block != prev_block) && ((size_t)prev_block >= (size_t)buf_data.gp_to_buffer)
 	&& (prev_block->is_free)) {
 		prev_block->block_size += current_block->block_size;
-		if ((size_t)next_block < (size_t)gp_to_buffer + g_buffer_size)
+		if ((size_t)next_block < (size_t)buf_data.gp_to_buffer + buf_data.g_buffer_size)
 			next_block->prev_block_size = prev_block->block_size;
 		current_block = prev_block;
 	}
 
-	if (((size_t)next_block < (size_t)gp_to_buffer + g_buffer_size) && (next_block->is_free)) {
+	if (((size_t)next_block < (size_t)buf_data.gp_to_buffer + buf_data.g_buffer_size) && (next_block->is_free)) {
 		current_block->block_size += next_block->block_size;
-		if ((size_t)next_block + next_block->block_size < (size_t)gp_to_buffer + g_buffer_size) {
+		if ((size_t)next_block + next_block->block_size < (size_t)buf_data.gp_to_buffer + buf_data.g_buffer_size) {
 			next_block = (header_t*)((size_t)next_block + next_block->block_size);
 			next_block->prev_block_size = current_block->block_size;
 		}
@@ -87,14 +104,18 @@ void mem_free(void *mem_block)
 
 void *mem_alloc(size_t size)
 {
-	header_t *current_block = (header_t*)gp_to_buffer;
+	header_t *current_block;
 	header_t *next_block;
 	size_t header_size = sizeof(header_t);
 	size_t new_size = size + header_size;
 
-	new_size = new_size + (4 - (new_size % 4));
+	if (!buf_data.gp_to_buffer)
+		goto globalp_is_null;
 
-	while ((size_t)current_block < ((size_t)gp_to_buffer + g_buffer_size)) {
+	current_block = (header_t*)buf_data.gp_to_buffer;
+	new_size = new_size + (ALIGN_BORDER - (new_size % ALIGN_BORDER));
+
+	while ((size_t)current_block < ((size_t)buf_data.gp_to_buffer + buf_data.g_buffer_size)) {
 		if ((current_block->is_free) && (current_block->block_size >= new_size)) {
 			if (current_block->block_size - new_size <= header_size)
 				new_size = current_block->block_size;
@@ -104,7 +125,9 @@ void *mem_alloc(size_t size)
 				next_block->is_free = TRUE;
 				next_block->prev_block_size = new_size;
 				next_block->block_size = current_block->block_size - new_size;
-				if (((size_t)next_block + next_block->block_size) < ((size_t)gp_to_buffer + g_buffer_size)) {
+
+				if (((size_t)next_block + next_block->block_size) 
+				< ((size_t)buf_data.gp_to_buffer + buf_data.g_buffer_size)) {
 					next_block = (header_t*)((size_t)next_block + next_block->block_size);
 					next_block->prev_block_size = current_block->block_size - new_size;
 				}
@@ -116,6 +139,7 @@ void *mem_alloc(size_t size)
 		current_block = (header_t*)((size_t)current_block + current_block->block_size);
 	}
 
+globalp_is_null:
 	return NULL;
 }
 
@@ -195,7 +219,7 @@ static ssize_t dev_counter_write(struct file *dst_file, const char *buf, size_t 
 	spin_lock_irqsave(&data->lock, data->irq_flags);
 	data->counter.value = value;
 	spin_unlock_irqrestore(&data->lock, data->irq_flags);
-	return value;
+	return len;
 }
 
 
@@ -369,7 +393,7 @@ ret_no_such_dev:
 static void __exit mk_life_exit(void)
 {	
 	free_irq(SIMPLE_DEV_IRQ, uap);
-	free_pages((unsigned long)gp_to_buffer, 0);
+	release_mem();
 	debugfs_remove_recursive(data->debugfs.dir);
 	printk("Congrats!!! Your life is simple.\n");
 }
